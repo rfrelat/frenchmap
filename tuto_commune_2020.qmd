@@ -1,0 +1,183 @@
+---
+title: "Tutorial on describing of French municipalities"
+format: html
+---
+
+
+# Aim
+
+The goal is to explore all data processing that are needed to get information on French agricultural landscape using freely available data and R.
+We will use the definition of `communes` (=town, municipality) in 2020 as the backbone of our characterization.
+
+
+# Preparation
+
+### Install and load packages
+Installation package and load them.
+
+```{r}
+library(sf) |> suppressPackageStartupMessages()
+library(terra) |> suppressPackageStartupMessages()
+library(mapsf)
+library(here) |> suppressPackageStartupMessages()
+```
+
+
+### Download data
+
+
+
+```{r}
+# set data directory
+datadir <- here::here("data")
+if (!dir.exists(datadir)) {
+  dir.create(
+    path = datadir,
+    showWarnings = FALSE,
+    recursive = TRUE
+  )
+}
+
+# load commune data
+file1 <- "ADMIN-EXPRESS-COG_2-1_2020-11-20_COMMUNE.shp"
+url1 <- "https://data.geopf.fr/telechargement/download/ADMIN-EXPRESS-COG/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20.7z"
+if (!file.exists(file.path(datadir, file1))) {
+  temp <- file.path(datadir, "temp.7z")
+  download.file(url1, temp, mode = "wb")
+  ?archive::archive_extract(temp, )
+}
+
+# First we tell R where the data are on the interwebs
+OISST_url_month <- "https://www.ncei.noaa.gov/data/sea-surface-temperature-optimum-interpolation/v2.1/access/avhrr/"
+
+# Then we pull that into a happy format
+# There is a lot here so it takes ~1 minute
+OISST_url_month_get <- getURL(OISST_url_month)
+```
+
+# Load Admin Express
+
+The spatial definition of `commune` comes from [IGN Geoservice](https://geoservices.ign.fr/telechargement-api/ADMIN-EXPRESS-COG). We will use the shapefile for the year 2020: [ADMIN-EXPRESS-COG_2-1_2020-11-20_COMMUNE.shp](https://data.geopf.fr/telechargement/download/ADMIN-EXPRESS-COG/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20.7z).  
+
+After download and extraction, the data can be load in R by:
+
+```{r}
+# load shapefile
+commune <- st_read("data/ADMIN-EXPRESS-COG_2-1_2020-11-20_COMMUNE.shp")
+
+# remove DOM-TOM
+commune <- commune[!commune$INSEE_DEP %in% 971:976, ]
+
+# calculate area in ha
+commune$area_ha <- as.numeric(st_area(commune)) * 0.0001
+
+# slight underestimation compare to terra
+# comp <- vect(commune) |> expanse(unit = "ha")
+# boxplot(2 * (commune$area_ha - comp) / (comp + commune$area_ha))
+```
+
+```{r}
+#| eval: false
+# map the commune per population
+# to make geometric scaling, remove 0s
+# commune$POPULATION[commune$POPULATION == 0] <- 1
+mf_map(
+  x = commune,
+  var = "area_ha",
+  type = "choro",
+  breaks = "geom",
+  nbreaks = 8,
+  border = NA
+)
+```
+
+# Extract information from CSV
+
+```{r}
+agreste <- read.table(
+  "data/data_Agreste_Commune.csv",
+  skip = 2,
+  sep = ";",
+  quote = "\"",
+  header = TRUE,
+  na.strings = "N/A",
+  encoding = "utf8"
+)
+```
+
+# Extract information from RASTER
+
+
+# Extract information from POLYGONS
+
+Let's now estimate the proportion of parcels certified as organic farming.
+The data comes from [Parcelles en Agriculture Biologique (AB) déclarées à la PAC](https://www.data.gouv.fr/datasets/616d6531c2951bbe8bd97771/). Specifically, we will use the shapefile [rpg-bio-2020-national.shp](https://www.data.gouv.fr/api/1/datasets/r/6428e701-1229-43b7-aaf7-16bbed2ea507) that match the year of the description of our communes.
+
+```{r}
+bio <- st_read("data/rpg-bio-2020-national.shp")
+
+# project commune in Lamber93
+# commune_93 <- st_transform(commune, crs = st_crs(bio))
+bio_latlong <- st_transform(bio, crs = st_crs(commune))
+
+# Extract overlapping areas (takes a long time)
+system.time({
+  overlaps <- st_intersection(commune, bio_latlong)
+}) #89 sec
+
+# terra solution
+system.time({
+  test2 <- vect(commune_93)
+  bio2 <- vect(bio)
+  o2 <- intersect(test2, bio2)
+}) # 65 sec
+
+
+o2$calsurf_ha <- expanse(o2, unit = "ha", transform = TRUE)
+plot(o2$calsurf, o2$SURFACE_HA)
+boxplot(o2$calsurf_ha - o2$SURFACE_HA)
+overlaps
+
+overlaps$SURFACE_HA <- as.numeric(overlaps$SURFACE_HA)
+overlaps$area_ha <- as.numeric(st_area(overlaps)) * 0.0001
+
+mf_map(
+  x = overlaps,
+  var = "SURFACE_HA",
+  type = "choro",
+  breaks = "Q6",
+  border = NA
+)
+
+bio_ha_commune <- tapply(
+  as.numeric(overlaps$SURFACE_HA),
+  overlaps$INSEE_COM,
+  sum,
+  na.rm = TRUE
+)
+
+m0 <- match(commune_93$INSEE_COM, names(bio_ha_commune))
+commune_93$bio_ha <- bio_ha_commune[m0]
+# NA means no organic fiels
+commune_93$bio_ha[is.na(commune_93$bio_ha)] <- 0
+
+# calculate the percentage of bio
+commune_93$bio_perc <- ifelse(
+  commune_93$bio_ha < commune_93$area_ha,
+  commune_93$bio_ha / commune_93$area_ha,
+  1
+)
+
+# check the extraction
+plot(commune_93$bio_ha, commune_93$bio_perc)
+
+# let's map
+mf_map(
+  x = commune_93,
+  var = "bio_perc",
+  type = "choro",
+  breaks = "equal",
+  border = NA
+)
+```
+
