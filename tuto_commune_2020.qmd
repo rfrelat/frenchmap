@@ -6,26 +6,47 @@ format: html
 
 # Aim
 
-The goal is to explore all data processing that are needed to get information on French agricultural landscape using freely available data and R.
-We will use the definition of `communes` (=town, municipality) in 2020 as the backbone of our characterization.
+The goal is to explore all data processing that are needed to get information on French agricultural landscape using freely available data and R.  
+We will use the `communes` (=town, municipality) in 2020 as the scale and backbone of our analysis.
 
 
 # Preparation
 
 ### Install and load packages
-Installation package and load them.
+
+For this workflow, we need five packages
 
 ```{r}
+# make sure to install needed package if needed
+
+pak <- c("sf", "terra", "mapsf", "here", "archive", "lwgeom")
+if (!requireNamespace(pak, quietly = TRUE)) {
+  install.packages(pak)
+}
+
+# load packages
 library(sf) |> suppressPackageStartupMessages()
+sf_use_s2(FALSE) # then use lwgeom package for st_area
 library(terra) |> suppressPackageStartupMessages()
 library(mapsf)
 library(here) |> suppressPackageStartupMessages()
+
+# library(archive)
+# --------------------------- [ANTICONF] --------------------------------
+# Configuration failed because libarchive was not found. Try installing:
+#  * deb: libarchive-dev (Debian, Ubuntu, etc)
+#  * rpm: libarchive-devel (Fedora, CentOS, RHEL)
+#  * csw: libarchive_dev (Solaris)
+#  * brew: libarchive (Mac OSX)
+# If libarchive is already installed, check that 'pkg-config' is in your
+# PATH and PKG_CONFIG_PATH contains a libarchive.pc file. If pkg-config
+# is unavailable you can set INCLUDE_DIR and LIB_DIR manually via:
+# R CMD INSTALL --configure-vars='INCLUDE_DIR=... LIB_DIR=...'
+# --------------------------------------------------------------------
 ```
 
 
 ### Download data
-
-
 
 ```{r}
 # set data directory
@@ -38,24 +59,47 @@ if (!dir.exists(datadir)) {
   )
 }
 
-# load commune data
+options(timeout = 1500)
+
+# download commune data
 file1 <- "ADMIN-EXPRESS-COG_2-1_2020-11-20_COMMUNE.shp"
 url1 <- "https://data.geopf.fr/telechargement/download/ADMIN-EXPRESS-COG/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20.7z"
 if (!file.exists(file.path(datadir, file1))) {
   temp <- file.path(datadir, "temp.7z")
   download.file(url1, temp, mode = "wb")
-  ?archive::archive_extract(temp, )
+  #archive::archive_extract(temp)
+  # so far by hand because archive can not be installed
+  file.remove(temp)
 }
 
-# First we tell R where the data are on the interwebs
-OISST_url_month <- "https://www.ncei.noaa.gov/data/sea-surface-temperature-optimum-interpolation/v2.1/access/avhrr/"
 
-# Then we pull that into a happy format
-# There is a lot here so it takes ~1 minute
-OISST_url_month_get <- getURL(OISST_url_month)
+# download bio parcelles RPG data
+file2 <- "rpg-bio-2020-national.shp"
+url2 <- "https://www.data.gouv.fr/api/1/datasets/r/6428e701-1229-43b7-aaf7-16bbed2ea507"
+if (!file.exists(file.path(datadir, file2))) {
+  temp <- file.path(datadir, "rpg-bio-2020-national.zip")
+  download.file(url2, temp, mode = "wb")
+  unzip(temp, exdir = datadir)
+  #archive::archive_extract(temp)
+  # so far by hand because archive can not be installed
+  file.remove(temp)
+}
+
+# download agreste dataset
+# to be defined
+
+# download OSO land cover plus
+file3 <- "Classif_Seed_0_2020.tif"
+url3 <- "https://zenodo.org/records/6538861/files/Classif_Seed_0_2020.tif?download=1"
+if (!file.exists(file.path(datadir, file3))) {
+  temp <- file.path(datadir, file3)
+  download.file(url3, temp, mode = "wb")
+}
 ```
 
+
 # Load Admin Express
+
 
 The spatial definition of `commune` comes from [IGN Geoservice](https://geoservices.ign.fr/telechargement-api/ADMIN-EXPRESS-COG). We will use the shapefile for the year 2020: [ADMIN-EXPRESS-COG_2-1_2020-11-20_COMMUNE.shp](https://data.geopf.fr/telechargement/download/ADMIN-EXPRESS-COG/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20.7z).  
 
@@ -70,17 +114,9 @@ commune <- commune[!commune$INSEE_DEP %in% 971:976, ]
 
 # calculate area in ha
 commune$area_ha <- as.numeric(st_area(commune)) * 0.0001
-
-# slight underestimation compare to terra
-# comp <- vect(commune) |> expanse(unit = "ha")
-# boxplot(2 * (commune$area_ha - comp) / (comp + commune$area_ha))
 ```
 
 ```{r}
-#| eval: false
-# map the commune per population
-# to make geometric scaling, remove 0s
-# commune$POPULATION[commune$POPULATION == 0] <- 1
 mf_map(
   x = commune,
   var = "area_ha",
@@ -94,18 +130,21 @@ mf_map(
 # Extract information from CSV
 
 ```{r}
-agreste <- read.table(
-  "data/data_Agreste_Commune.csv",
-  skip = 2,
-  sep = ";",
-  quote = "\"",
-  header = TRUE,
-  na.strings = "N/A",
-  encoding = "utf8"
-)
+# agreste <- read.table(
+#   "data/data_Agreste_Commune.csv",
+#   skip = 2,
+#   sep = ";",
+#   quote = "\"",
+#   header = TRUE,
+#   na.strings = "N/A",
+#   encoding = "utf8"
+# )
 ```
 
 # Extract information from RASTER
+Let's now estimate the proportion of forest per commune.
+The data comes from [Parcelles en Agriculture Biologique (AB) déclarées à la PAC](https://zenodo.org/records/6538861). Specifically, we will use the geotiff file [Classif_Seed_0_2020.tif](https://zenodo.org/records/6538861/files/Classif_Seed_0_2020.tif?download=1) that match the year of the description of our communes.
+
 
 
 # Extract information from POLYGONS
@@ -116,68 +155,70 @@ The data comes from [Parcelles en Agriculture Biologique (AB) déclarées à la 
 ```{r}
 bio <- st_read("data/rpg-bio-2020-national.shp")
 
-# project commune in Lamber93
-# commune_93 <- st_transform(commune, crs = st_crs(bio))
-bio_latlong <- st_transform(bio, crs = st_crs(commune))
+# project commune in Lambert93
+commune_L93 <- st_transform(commune, crs = st_crs(bio))
 
-# Extract overlapping areas (takes a long time)
-system.time({
-  overlaps <- st_intersection(commune, bio_latlong)
-}) #89 sec
+# Extract overlapping areas (takes some time <2min)
+overlaps <- st_intersection(commune_L93, bio)
+# dim(overlaps) # 993116
+# dim(bio) # 931387
+# dim(commune_L93) # 34839
+# length(bio_ha_commune)
 
-# terra solution
-system.time({
-  test2 <- vect(commune_93)
-  bio2 <- vect(bio)
-  o2 <- intersect(test2, bio2)
-}) # 65 sec
-
-
-o2$calsurf_ha <- expanse(o2, unit = "ha", transform = TRUE)
-plot(o2$calsurf, o2$SURFACE_HA)
-boxplot(o2$calsurf_ha - o2$SURFACE_HA)
-overlaps
-
-overlaps$SURFACE_HA <- as.numeric(overlaps$SURFACE_HA)
+# Calculate area (but in Lambert area might be little different than WGS84)
 overlaps$area_ha <- as.numeric(st_area(overlaps)) * 0.0001
 
-mf_map(
-  x = overlaps,
-  var = "SURFACE_HA",
-  type = "choro",
-  breaks = "Q6",
-  border = NA
-)
-
+# per commune
 bio_ha_commune <- tapply(
-  as.numeric(overlaps$SURFACE_HA),
+  overlaps$area_ha,
   overlaps$INSEE_COM,
   sum,
   na.rm = TRUE
 )
 
-m0 <- match(commune_93$INSEE_COM, names(bio_ha_commune))
-commune_93$bio_ha <- bio_ha_commune[m0]
+m0 <- match(commune_L93$INSEE_COM, names(bio_ha_commune))
+commune_L93$bio_ha <- bio_ha_commune[m0]
 # NA means no organic fiels
-commune_93$bio_ha[is.na(commune_93$bio_ha)] <- 0
+commune_L93$bio_ha[is.na(commune_L93$bio_ha)] <- 0
 
 # calculate the percentage of bio
-commune_93$bio_perc <- ifelse(
-  commune_93$bio_ha < commune_93$area_ha,
-  commune_93$bio_ha / commune_93$area_ha,
-  1
-)
-
-# check the extraction
-plot(commune_93$bio_ha, commune_93$bio_perc)
+# table(commune_L93$bio_ha < commune_L93$area_ha)
+# table(commune_L93$area_ha>0)
+commune_L93$bio_perc <- commune_L93$bio_ha / commune_L93$area_ha * 100
 
 # let's map
 mf_map(
-  x = commune_93,
+  x = commune_L93,
   var = "bio_perc",
   type = "choro",
   breaks = "equal",
   border = NA
 )
+
+# check differences if area calculated in L93
+# => less than 1% difference
+# commune_L93$area2 <- as.numeric(st_area(commune_L93)) * 0.0001
+# commune_L93$bio_perc2 <- commune_L93$bio_ha / commune_L93$area2 * 100
+# boxplot(
+#   2 *
+#     (commune_L93$bio_perc2 - commune_L93$bio_perc) /
+#     (commune_L93$bio_perc + commune_L93$bio_perc2) *
+#     100
+# )
+
+# check difference if percentage calculated with terra
+# test2 <- vect(commune_L93)
+# bio2 <- vect(bio)
+# o2 <- intersect(test2, bio2)
+# o2$calsurf_ha <- expanse(o2, unit = "ha", transform = TRUE)
+# bio_ha2 <- tapply(
+#   as.numeric(o2$calsurf_ha),
+#   o2$INSEE_COM,
+#   sum,
+#   na.rm = TRUE
+# )
+# # little difference
+# boxplot(2 * (bio_ha2 - bio_ha_commune) / (bio_ha2 + bio_ha_commune) * 100)
+
 ```
 
