@@ -10,15 +10,14 @@ The goal is to explore all data processing that are needed to get information on
 We will use the `communes` (=town, municipality) in 2020 as the scale and backbone of our analysis.
 
 
-# Preparation
+# 0. Setting-up
 
 ### Install and load packages
 
 For this workflow, we need five packages
 
 ```{r}
-# make sure to install needed package if needed
-
+# make sure needed packages are installed
 pak <- c("sf", "terra", "mapsf", "here", "archive", "lwgeom")
 if (!requireNamespace(pak, quietly = TRUE)) {
   install.packages(pak)
@@ -26,7 +25,8 @@ if (!requireNamespace(pak, quietly = TRUE)) {
 
 # load packages
 library(sf) |> suppressPackageStartupMessages()
-sf_use_s2(FALSE) # then use lwgeom package for st_area
+sf_use_s2(FALSE) |> suppressWarnings()
+# then use lwgeom package for st_area
 library(terra) |> suppressPackageStartupMessages()
 library(mapsf)
 library(here) |> suppressPackageStartupMessages()
@@ -48,6 +48,7 @@ library(here) |> suppressPackageStartupMessages()
 
 ### Download data
 
+Four datasets needs to be downloaded and stored in `data/` folder.
 ```{r}
 # set data directory
 datadir <- here::here("data")
@@ -62,46 +63,64 @@ if (!dir.exists(datadir)) {
 options(timeout = 1500)
 
 # download commune data
-file1 <- "ADMIN-EXPRESS-COG_2-1_2020-11-20_COMMUNE.shp"
+file1 <- "ADMIN-EXPRESS-COG_2-1_2020-11-20_COMMUNE."
 url1 <- "https://data.geopf.fr/telechargement/download/ADMIN-EXPRESS-COG/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20.7z"
-if (!file.exists(file.path(datadir, file1))) {
+dirshp <- "ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20/ADMIN-EXPRESS-COG/1_DONNEES_LIVRAISON_2020-11-20/ADE-COG_2-1_SHP_WGS84G_FRA/COMMUNE."
+shpext <- c("cpg", "dbf", "prj", "shp", "shx")
+if (!file.exists(file.path(datadir, paste0(file1, shpext[1])))) {
+  # download archive
   temp <- file.path(datadir, "temp.7z")
   download.file(url1, temp, mode = "wb")
-  #archive::archive_extract(temp)
-  # so far by hand because archive can not be installed
+  # extract only the COMMUNE.shp
+  archive::archive_extract(temp, dir = datadir, files = paste0(dirshp, shpext))
+  # copy and rename
+  file.copy(
+    from = file.path(datadir, paste0(dirshp, shpext)),
+    to = file.path(datadir, paste0(file1, shpext))
+  )
+  # remove temporary files
+  file.remove(file.path(datadir, paste0(dirshp, shpext)))
   file.remove(temp)
+  # remove temporary repository
+  unlink(
+    file.path(datadir, "ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20"),
+    recursive = TRUE
+  )
 }
 
+# download agreste dataset (not needed if repository cloned)
+file2 <- "data_Agreste_Commune.csv"
+url2 <- "https://github.com/rfrelat/frenchmap/raw/refs/heads/main/data/data_Agreste_Commune.csv"
+if (!file.exists(file.path(datadir, file2))) {
+  temp <- file.path(datadir, file2)
+  download.file(url2, temp, mode = "wb")
+}
 
 # download bio parcelles RPG data
-file2 <- "rpg-bio-2020-national.shp"
-url2 <- "https://www.data.gouv.fr/api/1/datasets/r/6428e701-1229-43b7-aaf7-16bbed2ea507"
-if (!file.exists(file.path(datadir, file2))) {
+file3 <- "rpg-bio-2020-national.shp"
+url3 <- "https://www.data.gouv.fr/api/1/datasets/r/6428e701-1229-43b7-aaf7-16bbed2ea507"
+if (!file.exists(file.path(datadir, file3))) {
   temp <- file.path(datadir, "rpg-bio-2020-national.zip")
-  download.file(url2, temp, mode = "wb")
+  download.file(url3, temp, mode = "wb")
   unzip(temp, exdir = datadir)
-  #archive::archive_extract(temp)
-  # so far by hand because archive can not be installed
   file.remove(temp)
 }
 
-# download agreste dataset
-# to be defined
 
 # download OSO land cover plus
-file3 <- "Classif_Seed_0_2020.tif"
-url3 <- "https://zenodo.org/records/6538861/files/Classif_Seed_0_2020.tif?download=1"
-if (!file.exists(file.path(datadir, file3))) {
-  temp <- file.path(datadir, file3)
-  download.file(url3, temp, mode = "wb")
+file4 <- "Classif_Seed_0_2020.tif"
+url4 <- "https://zenodo.org/records/6538861/files/Classif_Seed_0_2020.tif?download=1"
+if (!file.exists(file.path(datadir, file4))) {
+  temp <- file.path(datadir, file4)
+  download.file(url4, temp, mode = "wb")
 }
 ```
 
 
-# Load Admin Express
 
+# 1. Load Admin Express commune
 
-The spatial definition of `commune` comes from [IGN Geoservice](https://geoservices.ign.fr/telechargement-api/ADMIN-EXPRESS-COG). We will use the shapefile for the year 2020: [ADMIN-EXPRESS-COG_2-1_2020-11-20_COMMUNE.shp](https://data.geopf.fr/telechargement/download/ADMIN-EXPRESS-COG/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20.7z).  
+The spatial definition of `commune` comes from [IGN Geoservices](https://geoservices.ign.fr/telechargement-api/ADMIN-EXPRESS-COG). We will use the shapefile for the year 2020: [ADMIN-EXPRESS-COG_2-1_2020-11-20_COMMUNE.shp](https://data.geopf.fr/telechargement/download/ADMIN-EXPRESS-COG/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20.7z).  
 
 After download and extraction, the data can be load in R by:
 
@@ -114,11 +133,15 @@ commune <- commune[!commune$INSEE_DEP %in% 971:976, ]
 
 # calculate area in ha
 commune$area_ha <- as.numeric(st_area(commune)) * 0.0001
+
+# for mapping and extraction, we project the commune on Lambert 93 (EPSG:2154)
+commune_L93 <- st_transform(commune, crs = 2154)
 ```
 
 ```{r}
+# visualize the area of communes
 mf_map(
-  x = commune,
+  x = commune_L93,
   var = "area_ha",
   type = "choro",
   breaks = "geom",
@@ -127,24 +150,110 @@ mf_map(
 )
 ```
 
-# Extract information from CSV
+# 2. Extract information from CSV
+
+As an example, we will use data from [Agreste](https://stats.agriculture.gouv.fr/cartostat/#c=indicator&i=otex_2020_1.otefdd20&t=A02) downloaded at the commune level for 2020.
 
 ```{r}
-# agreste <- read.table(
-#   "data/data_Agreste_Commune.csv",
-#   skip = 2,
-#   sep = ";",
-#   quote = "\"",
-#   header = TRUE,
-#   na.strings = "N/A",
-#   encoding = "utf8"
-# )
+agreste <- read.table(
+  "data/data_Agreste_Commune.csv",
+  skip = 2,
+  sep = ";",
+  quote = "\"",
+  header = TRUE,
+  na.strings = "N/A",
+  encoding = "utf8"
+)
 ```
+
+Then we need to get the values of interest for each commune.
+```{r}
+# summarize the data per commune (if needed)
+# table(table(agreste$Code)) # here one line per Code, so no need to do
+# agreste$mean_SAU <- tapply(agreste$SAU.en.2020, agreste$Code, mean)
+
+# match the INSEE CODE
+m0 <- match(commune_L93$INSEE_COM, agreste$Code)
+# table(is.na(m0))
+
+# SAU : superficie agricole utilisée, in ha
+commune_L93$SAU_ha <- agreste$SAU.en.2020[m0]
+
+# PBS : production brute standard, in milliers d'euros standard
+commune_L93$PBS_kE <- agreste$PBS.en.2020[m0]
+
+# calculate indicator
+# some cultivated areas are bigger than the area of the commune
+# table(commune_L93$area_ha < commune_L93$SAU_h)
+# plot(
+#   commune_L93$area_ha,
+#   commune_L93$SAU_h,
+#   col = ifelse(commune_L93$area_ha < commune_L93$SAU_h, "red", "black")
+# )
+commune_L93$perc_SAU <- ifelse(
+  commune_L93$area_ha < commune_L93$SAU_h,
+  100,
+  commune_L93$SAU_ha / commune_L93$area_ha * 100
+)
+summary(commune_L93$perc_SAU)
+
+# production per hectare cultivated
+commune_L93$PBS_kE_per_ha <- commune_L93$PBS_kE / commune_L93$area_ha
+summary(commune_L93$PBS_kE_per_ha)
+```
+
+
+```{r}
+# visualize the percentage of cultivated area
+mf_map(
+  x = commune_L93,
+  var = "perc_SAU",
+  type = "choro",
+  breaks = "equal",
+  nbreaks = 10,
+  border = NA,
+  leg_title = "Percentage",
+)
+# layout elements
+credits <- paste0("Sources: Agreste – Recensements agricoles, 2020")
+mf_title("Percentage surface agricole")
+mf_credits(credits)
+mf_arrow()
+mf_scale()
+```
+
+```{r}
+# visualize the agricultural income per hectare
+mf_map(
+  x = commune_L93,
+  var = "PBS_kE_per_ha",
+  type = "choro",
+  breaks = "Q6",
+  nbreaks = 8,
+  border = NA,
+  leg_title = "kEuro per ha",
+)
+# layout elements
+credits <- paste0("Sources: Agreste – Recensements agricoles, 2020")
+mf_title("Production brute per hectare")
+mf_credits(credits)
+mf_arrow()
+mf_scale()
+```
+
 
 # Extract information from RASTER
 Let's now estimate the proportion of forest per commune.
-The data comes from [Parcelles en Agriculture Biologique (AB) déclarées à la PAC](https://zenodo.org/records/6538861). Specifically, we will use the geotiff file [Classif_Seed_0_2020.tif](https://zenodo.org/records/6538861/files/Classif_Seed_0_2020.tif?download=1) that match the year of the description of our communes.
+The data comes from [OSO land cover](https://www.theia-land.fr/en/blog/product/land-cover-map/). Specifically, we will use the geotiff file [Classif_Seed_0_2020.tif](https://zenodo.org/records/6538861/files/Classif_Seed_0_2020.tif?download=1) that match the year of the description of our communes.
 
+```{r}
+oso <- rast("data/Classif_Seed_0_2020.tif")
+plot(oso)
+mf_raster(oso, type = "classes")
+# take long time
+commune_terra <- vect(commune_L93)
+# oso_com <- extract(oso, commune_terra, fun = table, weights = TRUE)
+```
 
 
 # Extract information from POLYGONS
@@ -155,8 +264,6 @@ The data comes from [Parcelles en Agriculture Biologique (AB) déclarées à la 
 ```{r}
 bio <- st_read("data/rpg-bio-2020-national.shp")
 
-# project commune in Lambert93
-commune_L93 <- st_transform(commune, crs = st_crs(bio))
 
 # Extract overlapping areas (takes some time <2min)
 overlaps <- st_intersection(commune_L93, bio)
@@ -194,31 +301,15 @@ mf_map(
   breaks = "equal",
   border = NA
 )
-
-# check differences if area calculated in L93
-# => less than 1% difference
-# commune_L93$area2 <- as.numeric(st_area(commune_L93)) * 0.0001
-# commune_L93$bio_perc2 <- commune_L93$bio_ha / commune_L93$area2 * 100
-# boxplot(
-#   2 *
-#     (commune_L93$bio_perc2 - commune_L93$bio_perc) /
-#     (commune_L93$bio_perc + commune_L93$bio_perc2) *
-#     100
-# )
-
-# check difference if percentage calculated with terra
-# test2 <- vect(commune_L93)
-# bio2 <- vect(bio)
-# o2 <- intersect(test2, bio2)
-# o2$calsurf_ha <- expanse(o2, unit = "ha", transform = TRUE)
-# bio_ha2 <- tapply(
-#   as.numeric(o2$calsurf_ha),
-#   o2$INSEE_COM,
-#   sum,
-#   na.rm = TRUE
-# )
-# # little difference
-# boxplot(2 * (bio_ha2 - bio_ha_commune) / (bio_ha2 + bio_ha_commune) * 100)
-
 ```
+
+# Export information
+
+### As vector
+
+```{r}
+st_wri
+```
+
+### As raster
 
