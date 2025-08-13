@@ -1,55 +1,56 @@
 ---
-title: "Tutorial on describing of French municipalities"
-format: html
+title: "Tutorial on describing French municipalities"
+author: Romain Frelat
+date: last-modified
+format: 
+  html:
+    toc: true
+    code-overflow: wrap
+    link-external-newwindow: true
 ---
 
 
 # Aim
 
-The goal is to explore all data processing that are needed to get information on French agricultural landscape using freely available data and R.  
-We will use the `communes` (=town, municipality) in 2020 as the scale and backbone of our analysis.
+The goal is to explore the steps of data processing that are needed to get information on French agricultural landscape using freely available data and R.  
+The `communes` (=town, municipality) in 2020 are used as the scale and backbone of our analysis.
 
 
 # 0. Setting-up
 
 ### Install and load packages
 
-For this workflow, we need five packages
+For this workflow, we need a few packages. Let's load them (and install them if needed).
 
 ```{r}
 # make sure needed packages are installed
-pak <- c("sf", "terra", "mapsf", "here", "archive", "lwgeom")
+pak <- c("sf", "terra", "mapsf", "here", "archive", "lwgeom", "exactextractr")
 if (!requireNamespace(pak, quietly = TRUE)) {
   install.packages(pak)
 }
 
 # load packages
 library(sf) |> suppressPackageStartupMessages()
-sf_use_s2(FALSE) |> suppressWarnings()
-# then use lwgeom package for st_area
+sf_use_s2(FALSE) |> suppressMessages()
+# with sf_use_s2(FALSE), sf uses lwgeom package for st_area
 library(terra) |> suppressPackageStartupMessages()
 library(mapsf)
 library(here) |> suppressPackageStartupMessages()
+library(archive)
+library(exactextractr)
 
-# library(archive)
-# --------------------------- [ANTICONF] --------------------------------
-# Configuration failed because libarchive was not found. Try installing:
-#  * deb: libarchive-dev (Debian, Ubuntu, etc)
-#  * rpm: libarchive-devel (Fedora, CentOS, RHEL)
-#  * csw: libarchive_dev (Solaris)
-#  * brew: libarchive (Mac OSX)
-# If libarchive is already installed, check that 'pkg-config' is in your
-# PATH and PKG_CONFIG_PATH contains a libarchive.pc file. If pkg-config
-# is unavailable you can set INCLUDE_DIR and LIB_DIR manually via:
-# R CMD INSTALL --configure-vars='INCLUDE_DIR=... LIB_DIR=...'
-# --------------------------------------------------------------------
+# On Rossinante, we need to install libarchive
+# * deb: libarchive-dev (Debian, Ubuntu, etc)
 ```
 
 
 ### Download data
 
-Four datasets needs to be downloaded and stored in `data/` folder.
+Four datasets are needed to run the following analysis. You can download them one by one by hand and move them to the `data/` folder. Or you can run the code below to do this step automatically (total size: >2Gb).
+
 ```{r}
+#| code-fold: true
+
 # set data directory
 datadir <- here::here("data")
 if (!dir.exists(datadir)) {
@@ -67,7 +68,7 @@ file1 <- "ADMIN-EXPRESS-COG_2-1_2020-11-20_COMMUNE."
 url1 <- "https://data.geopf.fr/telechargement/download/ADMIN-EXPRESS-COG/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20.7z"
 dirshp <- "ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20/ADMIN-EXPRESS-COG/1_DONNEES_LIVRAISON_2020-11-20/ADE-COG_2-1_SHP_WGS84G_FRA/COMMUNE."
 shpext <- c("cpg", "dbf", "prj", "shp", "shx")
-if (!file.exists(file.path(datadir, paste0(file1, shpext[1])))) {
+if (!file.exists(here::here(datadir, paste0(file1, shpext[1])))) {
   # download archive
   temp <- file.path(datadir, "temp.7z")
   download.file(url1, temp, mode = "wb")
@@ -122,23 +123,36 @@ if (!file.exists(file.path(datadir, file4))) {
 
 The spatial definition of `commune` comes from [IGN Geoservices](https://geoservices.ign.fr/telechargement-api/ADMIN-EXPRESS-COG). We will use the shapefile for the year 2020: [ADMIN-EXPRESS-COG_2-1_2020-11-20_COMMUNE.shp](https://data.geopf.fr/telechargement/download/ADMIN-EXPRESS-COG/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20/ADMIN-EXPRESS-COG_2-1__SHP__FRA_2020-11-20.7z).  
 
-After download and extraction, the data can be load in R by:
+After download and extraction of the archive, load the data in R:
 
 ```{r}
+#| eval: false
+
 # load shapefile
 commune <- st_read("data/ADMIN-EXPRESS-COG_2-1_2020-11-20_COMMUNE.shp")
 
 # remove DOM-TOM
 commune <- commune[!commune$INSEE_DEP %in% 971:976, ]
 
-# calculate area in ha
-commune$area_ha <- as.numeric(st_area(commune)) * 0.0001
-
-# for mapping and extraction, we project the commune on Lambert 93 (EPSG:2154)
+# for mapping and extraction, we project the shapefile to Lambert 93 (EPSG:2154)
 commune_L93 <- st_transform(commune, crs = 2154)
+
+# calculate area in ha
+commune_L93$area_ha <- as.numeric(st_area(commune_L93)) * 0.0001
 ```
 
+<!-- Too avoid long calculation, and fasten quarto rendering-->
 ```{r}
+#| echo: false
+#| eval: true
+commune_L93 <- st_read("data/Communes_Indicators.shp", quiet = TRUE)
+```
+
+#### Visualization
+
+```{r}
+#| code-fold: true
+
 # visualize the area of communes
 mf_map(
   x = commune_L93,
@@ -146,15 +160,24 @@ mf_map(
   type = "choro",
   breaks = "geom",
   nbreaks = 8,
-  border = NA
+  pal = "Teal",
+  border = NA,
+  leg_title = "ha",
 )
+# layout elements
+mf_title("Commune surface")
+mf_credits("Sources: IGN Geoservices, 2020")
+mf_arrow()
+mf_scale()
 ```
+
 
 # 2. Extract information from CSV
 
 As an example, we will use data from [Agreste](https://stats.agriculture.gouv.fr/cartostat/#c=indicator&i=otex_2020_1.otefdd20&t=A02) downloaded at the commune level for 2020.
 
 ```{r}
+#| eval: false
 agreste <- read.table(
   "data/data_Agreste_Commune.csv",
   skip = 2,
@@ -166,11 +189,9 @@ agreste <- read.table(
 )
 ```
 
-Then we need to get the values of interest for each commune.
+Then we need to get the values of interest for each commune. Agreste data provide one row per commune, so we don't need to further pre-process this file.
 ```{r}
-# summarize the data per commune (if needed)
-# table(table(agreste$Code)) # here one line per Code, so no need to do
-# agreste$mean_SAU <- tapply(agreste$SAU.en.2020, agreste$Code, mean)
+#| eval: false
 
 # match the INSEE CODE
 m0 <- match(commune_L93$INSEE_COM, agreste$Code)
@@ -179,103 +200,164 @@ m0 <- match(commune_L93$INSEE_COM, agreste$Code)
 # SAU : superficie agricole utilisée, in ha
 commune_L93$SAU_ha <- agreste$SAU.en.2020[m0]
 
-# PBS : production brute standard, in milliers d'euros standard
-commune_L93$PBS_kE <- agreste$PBS.en.2020[m0]
-
-# calculate indicator
-# some cultivated areas are bigger than the area of the commune
-# table(commune_L93$area_ha < commune_L93$SAU_h)
-# plot(
-#   commune_L93$area_ha,
-#   commune_L93$SAU_h,
-#   col = ifelse(commune_L93$area_ha < commune_L93$SAU_h, "red", "black")
-# )
-commune_L93$perc_SAU <- ifelse(
+# calculate percentage of agricultural land
+# but some SAU are bigger than commune area
+# need to be checked further ...
+commune_L93$pct_SAU <- ifelse(
   commune_L93$area_ha < commune_L93$SAU_h,
   100,
   commune_L93$SAU_ha / commune_L93$area_ha * 100
 )
-summary(commune_L93$perc_SAU)
+summary(commune_L93$pct_SAU)
 
-# production per hectare cultivated
-commune_L93$PBS_kE_per_ha <- commune_L93$PBS_kE / commune_L93$area_ha
-summary(commune_L93$PBS_kE_per_ha)
+
+# Percentage of farmers older than 55
+var <- "Part.des.chefs.d.exploitation.et.coexploitants.de.55.ans.ou.plus..2020"
+commune_L93$pct_55p <- agreste[m0, var]
+summary(commune_L93$pct_55p)
+
 ```
 
 
+#### Visualization
 ```{r}
-# visualize the percentage of cultivated area
+#| code-fold: true
+
+# visualize the Percentage of cultivated area
 mf_map(
   x = commune_L93,
-  var = "perc_SAU",
+  var = "pct_SAU",
   type = "choro",
   breaks = "equal",
   nbreaks = 10,
+  pal = "Teal",
   border = NA,
-  leg_title = "Percentage",
+  leg_title = "percentage",
 )
 # layout elements
-credits <- paste0("Sources: Agreste – Recensements agricoles, 2020")
 mf_title("Percentage surface agricole")
-mf_credits(credits)
+mf_credits("Sources: Agreste – Recensements agricoles, 2020")
 mf_arrow()
 mf_scale()
 ```
 
 ```{r}
+#| code-fold: true
+# visualize the percentage of head farmer of 55+
+mf_map(
+  x = commune_L93,
+  var = "pct_55p",
+  type = "choro",
+  breaks = "equal",
+  pal = "Teal",
+  border = NA,
+  leg_title = "percentage",
+)
+# layout elements
+mf_title("Percentage of farm's head older than 55")
+mf_credits("Sources: Agreste – Recensements agricoles, 2020")
+mf_arrow()
+mf_scale()
+```
+
+
+
+# 3. Extract information from RASTER
+
+As an example, we use the land cover information as gridded dataset. Let's estimate the proportion of forest per commune.
+The data comes from [OSO land cover](https://www.theia-land.fr/en/blog/product/land-cover-map/). Specifically, we use the geotiff file [Classif_Seed_0_2020.tif](https://zenodo.org/records/6538861/files/Classif_Seed_0_2020.tif?download=1).
+
+First, we need to load and reclassify the forest pixels.
+
+```{r}
+# reclassify forest cover with 0 and 1
+# it takes a long time to reclassify the raster
+# so only if not already available
+file5 <- "OSO_forest.tif"
+if (!file.exists(file.path(datadir, file5))) {
+  oso <- rast(file.path(datadir, file4))
+  # reclassification matrix
+  # forest are classes 16 and 17
+  matc <- matrix(
+    c(0, 15.5, 0, 15.5, 17.5, 1, 17.5, 23, 0),
+    ncol = 3,
+    byrow = TRUE
+  )
+  # classify OSO land cover per forest
+  forest <- classify(
+    oso,
+    matc,
+    include.lowest = TRUE,
+    filename = file.path(datadir, file5)
+  )
+  # might be faster (to be tested)
+  # forest <- clamp(oso, lower = 16, upper = 17, values = TRUE)
+  # forest[!is.na(forest)] <- 1
+  # forest[is.na(forest)] <- 0
+} else {
+  forest <- rast(file.path(datadir, file5))
+}
+```
+
+
+Then we can extract zonal statistics for each commune (it takes a long time to run).
+
+```{r}
+#| eval: false
+# much faster (but still takes long time)
+zonal_forest = exact_extract(forest, commune_L93, fun = "mean")
+
+# save the percentage of forest in the vector object
+commune_L93$pct_forest <- zonal_forest * 100
+
+# exactextractr is faster than terra::zonal
+# commune_terra <- vect(commune_L93)
+# zonal_forest <- zonal(forest, commune_terra, fun = mean, weights = TRUE)
+```
+
+
+#### Visualization
+
+```{r}
+#| code-fold: true
 # visualize the agricultural income per hectare
 mf_map(
   x = commune_L93,
-  var = "PBS_kE_per_ha",
+  var = "pct_forest",
   type = "choro",
-  breaks = "Q6",
-  nbreaks = 8,
+  breaks = "equal",
+  nbreaks = 10,
+  pal = "Teal",
   border = NA,
-  leg_title = "kEuro per ha",
+  leg_title = "percentage",
 )
 # layout elements
-credits <- paste0("Sources: Agreste – Recensements agricoles, 2020")
-mf_title("Production brute per hectare")
-mf_credits(credits)
+mf_title("Percentage of forest")
+mf_credits("Sources: OSO Land Cover, 2020")
 mf_arrow()
 mf_scale()
 ```
 
 
-# Extract information from RASTER
-Let's now estimate the proportion of forest per commune.
-The data comes from [OSO land cover](https://www.theia-land.fr/en/blog/product/land-cover-map/). Specifically, we will use the geotiff file [Classif_Seed_0_2020.tif](https://zenodo.org/records/6538861/files/Classif_Seed_0_2020.tif?download=1) that match the year of the description of our communes.
-
-```{r}
-oso <- rast("data/Classif_Seed_0_2020.tif")
-plot(oso)
-mf_raster(oso, type = "classes")
-# take long time
-commune_terra <- vect(commune_L93)
-# oso_com <- extract(oso, commune_terra, fun = table, weights = TRUE)
-```
-
-
-# Extract information from POLYGONS
+# 4. Extract information from POLYGONS
 
 Let's now estimate the proportion of parcels certified as organic farming.
-The data comes from [Parcelles en Agriculture Biologique (AB) déclarées à la PAC](https://www.data.gouv.fr/datasets/616d6531c2951bbe8bd97771/). Specifically, we will use the shapefile [rpg-bio-2020-national.shp](https://www.data.gouv.fr/api/1/datasets/r/6428e701-1229-43b7-aaf7-16bbed2ea507) that match the year of the description of our communes.
+The data comes from [Parcelles en Agriculture Biologique (AB) déclarées à la PAC](https://www.data.gouv.fr/datasets/616d6531c2951bbe8bd97771/). Specifically, we use the shapefile [rpg-bio-2020-national.shp](https://www.data.gouv.fr/api/1/datasets/r/6428e701-1229-43b7-aaf7-16bbed2ea507).
 
 ```{r}
-bio <- st_read("data/rpg-bio-2020-national.shp")
+#| eval: false
 
+bio <- st_read("data/rpg-bio-2020-national.shp")
 
 # Extract overlapping areas (takes some time <2min)
 overlaps <- st_intersection(commune_L93, bio)
 # dim(overlaps) # 993116
 # dim(bio) # 931387
-# dim(commune_L93) # 34839
-# length(bio_ha_commune)
 
-# Calculate area (but in Lambert area might be little different than WGS84)
+# Calculate area of overlaps
 overlaps$area_ha <- as.numeric(st_area(overlaps)) * 0.0001
 
-# per commune
+# summarize the area of organic farming per commune
 bio_ha_commune <- tapply(
   overlaps$area_ha,
   overlaps$INSEE_COM,
@@ -283,33 +365,98 @@ bio_ha_commune <- tapply(
   na.rm = TRUE
 )
 
+# save the information in the shapefile
+# match with the shapefile
 m0 <- match(commune_L93$INSEE_COM, names(bio_ha_commune))
 commune_L93$bio_ha <- bio_ha_commune[m0]
 # NA means no organic fiels
 commune_L93$bio_ha[is.na(commune_L93$bio_ha)] <- 0
 
 # calculate the percentage of bio
-# table(commune_L93$bio_ha < commune_L93$area_ha)
-# table(commune_L93$area_ha>0)
-commune_L93$bio_perc <- commune_L93$bio_ha / commune_L93$area_ha * 100
-
-# let's map
-mf_map(
-  x = commune_L93,
-  var = "bio_perc",
-  type = "choro",
-  breaks = "equal",
-  border = NA
-)
+commune_L93$bio_pct <- commune_L93$bio_ha / commune_L93$area_ha * 100
+summary(commune_L93$bio_pct)
 ```
 
-# Export information
+#### Visualization
+
+```{r}
+#| code-fold: true
+
+# visualize the agricultural income per hectare
+mf_map(
+  x = commune_L93,
+  var = "pct_bio",
+  type = "choro",
+  breaks = "equal",
+  nbreaks = 10,
+  pal = "Teal",
+  border = NA,
+  leg_title = "percentage",
+)
+# layout elements
+mf_title("Percentage of organic land")
+mf_credits("Sources: RPG, 2020")
+mf_arrow()
+mf_scale()
+```
+
+
+# 5. Export indicators
 
 ### As vector
 
 ```{r}
-st_wri
+#| eval: false
+
+# not sure why, but variables are renamed incoherently
+# it helps to transform '_' by '.'
+
+names(commune_L93) <- gsub("_", ".", names(commune_L93))
+
+# export as shapefile
+st_write(
+  commune_L93,
+  dsn = file.path(datadir, "Communes_Indicators.shp"),
+  append = FALSE
+)
 ```
 
 ### As raster
+```{r}
+# transform to raster with terra
+# need to transform sf object to terra::vect()
+commune_terra <- vect(commune_L93)
 
+# create a grid with 1km resolution
+grid1k <- rast(commune_terra, res = 1000)
+
+# rasterize
+psau <- terra::rasterize(
+  commune_terra,
+  grid1k,
+  field = "pct_SAU",
+  filename = file.path(datadir, "Communes_1km_pctSAU.tif"),
+  overwrite = TRUE
+)
+
+# with stars, not sure how to set the resolution
+# pct_sau <- stars::st_rasterize(
+#   commune_L93["pct_SAU"],
+#   file = file.path(datadir, "Communes_2020_pctSAU.tif"),
+#   driver = "GTiff"
+# )
+```
+
+#### Visualization
+
+```{r}
+#| code-fold: true
+
+# visualize the agricultural income per hectare
+mf_raster(psau, leg_title = "percentage")
+# layout elements
+mf_title("Percentage of agricultural land")
+mf_credits("Sources: Agreste – Recensements agricoles, 2020")
+mf_arrow()
+mf_scale()
+```

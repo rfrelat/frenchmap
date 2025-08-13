@@ -9,3 +9,9 @@ data/ADMIN*
 data/rpg*
 data/Classif*
 data/BDCARTO*
+
+# or derived data
+data/OSO*
+data/Communes*
+
+/.quarto/
