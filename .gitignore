@@ -4,4 +4,7 @@
 .Ruserdata
 
 test*.R
-data/
+# remove downloadable dataset
+data/ADMIN*
+data/rpg*
+data/Classif*
