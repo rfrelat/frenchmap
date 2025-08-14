@@ -139,7 +139,8 @@ plot(shp, add = TRUE, border = "black")
 
 
 ```{r}
-#| echo: false
+#| code-fold: true
+#| code-summary: "Zoom in"
 
 zoom_lc <- rasterize(
   lulc,
@@ -197,8 +198,10 @@ road_gd <- terra::rasterize(
 ```
 
 ```{r}
-#| echo: false
-# on the zoom region (much faster)
+#| code-fold: true
+#| code-summary: "Zoom in"
+
+# on the zoom region
 zoom_rd <- rasterize(
   road,
   zoom10,
@@ -274,9 +277,10 @@ plot(water_gd)
 ```
 
 ```{r}
-#| echo: false
+#| code-fold: true
+#| code-summary: "Zoom in"
 
-# on the zoom region (much faster)
+# on the zoom region
 zoom_ri <- rasterize(river, zoom10, touches = TRUE)
 zoom_la <- rasterize(lake, zoom10, touches = TRUE)
 
@@ -361,12 +365,13 @@ zoom_vp <- crop(
 plot(zoom_vp)
 ```
 
-# Ground truthing
+# 5. Ground truthing
 
-We can check the area with mapview package.
+We can check the area with mapview package. Explore the different layers to see information from the satellite and open street map.
+ 
 ```{r}
 #| code-fold: true
-#| code-summary: "Show the code"
+
 # project to WGS84
 zoom_4326 <- project(as.polygons(z, crs(shp)), "EPSG:4326")
 mapview::mapview(
