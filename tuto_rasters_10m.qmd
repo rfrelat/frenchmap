@@ -346,17 +346,36 @@ plot(vpp_gd)
 ```
 
 ```{r}
-#| echo: false
+#| code-fold: true
+#| code-summary: "Zoom in"
 vpp_gd <- rast(here(datadir, "VPP_2023_Lamber93_10m.tif"))
 
 # crop to extent the department
 zoom_vp <- crop(
   vpp_gd,
   zoom10,
-  ,
   filename = here(datadir, "ZOOM_VPP_10m.tif"),
   overwrite = TRUE
 )
 
 plot(zoom_vp)
+```
+
+# Ground truthing
+
+We can check the area with mapview package.
+```{r}
+#| code-fold: true
+#| code-summary: "Show the code"
+# project to WGS84
+zoom_4326 <- project(as.polygons(z, crs(shp)), "EPSG:4326")
+mapview::mapview(
+  zoom_4326,
+  lwd = 4,
+  color = "black",
+  alpha = 1,
+  alpha.region = 0,
+  legend = FALSE
+)
+
 ```
