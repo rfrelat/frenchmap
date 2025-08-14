@@ -12,10 +12,15 @@
 
 Tutorials on handling GIS data to characterize french agricultural landscape.
 
+<https://rfrelat.github.io/frenchmap/tuto_commune_2020.html>
+
+<https://rfrelat.github.io/frenchmap/tuto_rasters_10m.html>
 
 
 
 To render these tutorials, run:
 ```r
 quarto::quarto_render("tuto_commune_2020.qmd")
+
+quarto::quarto_render("tuto_rasters_10m.qmd")
 ```

@@ -1,0 +1,362 @@
+---
+title: "Tutorial on creating high resolution rasters"
+author: Romain Frelat
+date: last-modified
+format: 
+  html:
+    toc: true
+    code-overflow: wrap
+    link-external-newwindow: true
+---
+
+
+# Aim
+
+The goal is to explore high resolution datasets for characterizing the department of Landes (40), in Gironde (33), in Charente Maritime (17). We will focus on dataset from [BD CARTO](https://geoservices.ign.fr/bdcarto) and [vegetation indices from Copernicus](https://land.copernicus.eu/en/products/vegetation)
+
+# 0. Setting-up
+
+### Install and load packages
+
+For this workflow, we mostly rely on [terra](https://rspatial.github.io/terra/index.html) R package.
+
+```{r}
+# make sure needed packages are installed
+pak <- c("terra", "here")
+if (!requireNamespace(pak, quietly = TRUE)) {
+  install.packages(pak)
+}
+
+# load packages
+library(terra) |> suppressPackageStartupMessages()
+library(here) |> suppressPackageStartupMessages()
+
+# set data directory
+datadir <- here("data")
+```
+
+
+### Download data
+
+The BD CARTO needs to be downloaded and stored in `data/` folder. You can download them by hand and move them to the `data/` folder. Or you can run the code below to do this step automatically (total size: 700Mb).
+
+```{r}
+#| code-fold: true
+
+if (!dir.exists(datadir)) {
+  dir.create(
+    path = datadir,
+    showWarnings = FALSE,
+    recursive = TRUE
+  )
+}
+
+options(timeout = 1500)
+
+dep <- c("17", "33", "40")
+base_url <- "https://data.geopf.fr/telechargement/download/BDCARTO/BDCARTO_5-0_TOUSTHEMES_SHP_LAMB93_D0XX_2025-03-15/BDCARTO_5-0_TOUSTHEMES_SHP_LAMB93_D0XX_2025-03-15.7z"
+for (i in dep) {
+  diri <- paste0("BDCARTO_5-0_TOUSTHEMES_SHP_LAMB93_D0", i, "_2025-03-15")
+  if (!dir.exists(here::here(datadir, diri))) {
+    tempfile <- file.path(datadir, "temp_17.7z")
+    download.file(gsub("XX", i, base_url), tempfile, mode = "wb")
+    # extract all
+    archive::archive_extract(tempfile, dir = datadir)
+    # remove archive
+    file.remove(tempfile)
+  }
+}
+```
+
+
+Vegetation index from [COPERNICUS Land Monitoring Service](https://land.copernicus.eu/en/products/vegetation?tab=vegetation_phenology_and_productivity_parameters) requires registration, so it's easier to download them by hand.
+As an example, I [downloaded (4Gb)](https://copernicus-fme.eea.europa.eu/fmedatadownload/results/8346.zip) the Seasonal Productivity of 2023 at 10m spatial resolution (DOI [10.2909/5ae0f2a2-7ad8-4f7c-878d-f1b09d78d7a1](https://doi.org/10.2909/5ae0f2a2-7ad8-4f7c-878d-f1b09d78d7a1)).
+
+
+### Set spatial extent and grid
+
+```{r}
+dep_files <- list.files(datadir, "DEPARTEMENT.shp", recursive = TRUE)
+dep33 <- dep_files[grepl("033", dep_files)]
+shp <- vect(here(datadir, dep33))
+shp <- shp[shp$INSEE_DEP %in% dep]
+plot(shp)
+
+# create grid with 10m resolution
+grid10 <- rast(shp, res = 10)
+
+# create a small zoom for testing
+# set a an area at +/-2.5km (500 pixels)
+mean_ext <- mean(ext(shp))
+z <- ext(rep(mean_ext, each = 2) + rep(c(-2500, 2500), 2))
+zoom10 <- crop(grid10, z)
+
+plot(z, col = "red", border = NA, add = TRUE)
+```
+
+All analysis will be carried out for the three departments.  
+As an illustration, maps will zoom on the small 500x500 pixel area at the centre of the study area.
+
+
+# 1. Land cover
+  
+
+```{r}
+#load all land cover data
+lulc_files <- list.files(
+  datadir,
+  "OCCUPATION_DU_SOL.shp",
+  recursive = TRUE,
+  full.names = TRUE
+)
+lulc_list <- lapply(lulc_files, vect)
+lulc <- do.call(rbind, lulc_list)
+
+table(lulc$NATURE)
+# might be good to group some of the categories?
+```
+
+
+```{r}
+#| eval: false
+
+# clip the land cover with the regions
+lulc <- crop(lulc, shp)
+# plot(lc, col= rainbow(10)[as.factor(lc$NATURE)], border=NA)
+
+# rasterize at 10m resolution
+lulc_gd <- rasterize(
+  lulc,
+  grid10,
+  field = "NATURE",
+  filename = here(datadir, "BDCARTO_173340_LULC_10m.tif"),
+  overwrite = TRUE
+)
+
+plot(lulc_gd)
+plot(shp, add = TRUE, border = "black")
+```
+
+
+```{r}
+#| echo: false
+
+zoom_lc <- rasterize(
+  lulc,
+  zoom10,
+  field = "NATURE",
+  filename = here(datadir, "ZOOM_LULC_10m.tif"),
+  overwrite = TRUE
+)
+
+# par(mfrow=c(1,2))
+# plot(lulc, ext=z)
+plot(zoom_lc)
+```
+
+
+
+# 2. Road network
+
+```{r}
+#load all road network
+road_files <- list.files(
+  datadir,
+  "TRONCON_DE_ROUTE.shp",
+  recursive = TRUE,
+  full.names = TRUE
+)
+road_list <- lapply(road_files, vect)
+road <- do.call(rbind, road_list)
+
+table(road$NATURE)
+# might need to remove some type of roads ...
+```
+
+
+```{r}
+#| eval: false
+
+# clip the land cover with the regions (take some time)
+road <- crop(road, shp)
+
+# might be good to set the width of the road based on its nature
+table(road$NATURE)
+
+# plot(road, col= rainbow(10)[as.factor(road$NATURE)])
+
+# rasterize
+road_gd <- terra::rasterize(
+  road,
+  grid10,
+  touches = TRUE,
+  filename = here(datadir, "BDCARTO_173340_Road_10m.tif"),
+  overwrite = TRUE
+) # add field = "NATURE" to keep information on type of roads
+
+```
+
+```{r}
+#| echo: false
+# on the zoom region (much faster)
+zoom_rd <- rasterize(
+  road,
+  zoom10,
+  filename = here(datadir, "ZOOM_Road_10m.tif"),
+  overwrite = TRUE
+)
+
+# par(mfrow=c(1,2))
+# plot(road, ext=z)
+plot(zoom_rd)
+```
+
+
+# 3. Rivers and lake
+
+```{r}
+#load all rivers
+river_files <- list.files(
+  datadir,
+  "TRONCON_HYDROGRAPHIQUE.shp",
+  recursive = TRUE,
+  full.names = TRUE
+)
+river_list <- lapply(river_files, vect)
+river <- do.call(rbind, river_list)
+
+lake_files <- list.files(
+  datadir,
+  "SURFACE_HYDROGRAPHIQUE.shp",
+  recursive = TRUE,
+  full.names = TRUE
+)
+lake_list <- lapply(lake_files, vect)
+lake <- do.call(rbind, lake_list)
+
+table(river$NATURE)
+table(lake$NATURE)
+```
+
+```{r}
+#| eval: false
+
+# clip the river and lake in the area of interest
+# can take a long time
+river <- crop(river, shp)
+lake <- crop(lake, shp)
+
+plot(river, col = rainbow(18)[as.factor(river$NATURE)])
+plot(lake, add = TRUE, col = "blue", border = NA)
+
+# rasterize river and lake
+river_gd <- rasterize(river, grid10, touches = TRUE)
+lake_gd <- rasterize(lake, grid10, touches = TRUE)
+
+# replace NA by 0
+river_gd[is.na(river_gd)] <- 0
+lake_gd[is.na(lake_gd)] <- 0
+
+# add rivers and lakes in a
+water_gd <- river_gd + lake_gd
+
+# set NA for the areas without rivers or lake
+NAflag(water_gd) <- 0
+
+# export the raster
+writeRaster(
+  water_gd,
+  here(datadir, "BDCARTO_173340_Water_10m.tif"),
+  overwrite = TRUE
+)
+
+plot(water_gd)
+```
+
+```{r}
+#| echo: false
+
+# on the zoom region (much faster)
+zoom_ri <- rasterize(river, zoom10, touches = TRUE)
+zoom_la <- rasterize(lake, zoom10, touches = TRUE)
+
+zoom_ri[is.na(zoom_ri)] <- 0
+zoom_la[is.na(zoom_la)] <- 0
+zoom_wa <- zoom_ri + zoom_la
+NAflag(zoom_wa) <- 0
+
+# export the raster
+writeRaster(
+  zoom_wa,
+  here(datadir, "ZOOM_Water_10m.tif"),
+  overwrite = TRUE
+)
+
+plot(zoom_wa, col = "blue")
+```
+
+# 4. Primary production
+
+Here, we load the dataset from Copernicus LMS.
+
+```{r}
+#| eval: false
+# load all rasters
+vpp_files <- list.files(
+  datadir,
+  "VPP_2023_S2",
+  recursive = TRUE,
+  full.names = TRUE
+)
+list_rast <- lapply(vpp_files, rast) |> sprc()
+
+# make a mosaic
+vpp <- mosaic(
+  list_rast,
+  filename = here(datadir, "VPP_2023_UTM30N_10m.tif"),
+  overwrite = TRUE
+)
+
+# project department in UTM30N
+shp_32630 <- project(shp, "EPSG:32630")
+
+# crop to extent of interest (to reduce the mosaic)
+vpp_clip <- crop(vpp, ext(shp_32630))
+
+# project to Lambert 93
+vpp_2154 <- project(vpp_clip, crs(grid10))
+
+# resample on our 10x10m grid
+vpp_gd <- resample(
+  vpp_2154,
+  grid10,
+  method = "average"
+)
+
+# crop to extent the departments
+vpp_gd <- crop(
+  vpp_gd,
+  shp,
+  mask = TRUE,
+  filename = here(datadir, "VPP_2023_Lamber93_10m.tif"),
+  overwrite = TRUE
+)
+
+plot(vpp_gd)
+```
+
+```{r}
+#| echo: false
+vpp_gd <- rast(here(datadir, "VPP_2023_Lamber93_10m.tif"))
+
+# crop to extent the department
+zoom_vp <- crop(
+  vpp_gd,
+  zoom10,
+  ,
+  filename = here(datadir, "ZOOM_VPP_10m.tif"),
+  overwrite = TRUE
+)
+
+plot(zoom_vp)
+```
